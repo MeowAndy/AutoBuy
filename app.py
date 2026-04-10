@@ -133,13 +133,32 @@ def _spawn_detached_restart():
     argv = [sys.executable] + sys.argv
 
     if os.name == 'nt':
-        # Windows：延迟 2 秒，等待当前进程释放端口后重新拉起
-        cmdline = subprocess.list2cmdline(argv)
-        restart_cmd = f'ping 127.0.0.1 -n 3 >nul && start "" {cmdline}'
+        # Windows：使用 Python 辅助进程延迟重启，避免 cmd/start 转义和路径解析问题
+        import tempfile
+        helper_code = r'''
+import os
+import sys
+import time
+import subprocess
+
+project_dir = sys.argv[1]
+argv = sys.argv[2:]
+time.sleep(2)
+subprocess.Popen(
+    argv,
+    cwd=project_dir,
+    creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
+    stdout=subprocess.DEVNULL,
+    stderr=subprocess.DEVNULL,
+)
+'''
+        fd, helper_path = tempfile.mkstemp(prefix='autobuy_restart_', suffix='.py')
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            f.write(helper_code)
         subprocess.Popen(
-            ['cmd', '/c', restart_cmd],
+            [sys.executable, helper_path, PROJECT_DIR, *argv],
             cwd=PROJECT_DIR,
-            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS,
+            creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
