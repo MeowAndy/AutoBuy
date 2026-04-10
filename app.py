@@ -286,4 +286,13 @@ def stream_logs(task_id):
 
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    import argparse
+
+    parser = argparse.ArgumentParser(description='AutoBuy Web UI')
+    parser.add_argument('--host', default=os.getenv('HOST', '0.0.0.0'), help='监听地址，默认 0.0.0.0')
+    parser.add_argument('--port', type=int, default=int(os.getenv('PORT', '5000')), help='监听端口，默认 5000，可多实例分别指定')
+    parser.add_argument('--debug', action='store_true', default=os.getenv('DEBUG', 'false').lower() == 'true', help='是否开启 Flask debug')
+    args = parser.parse_args()
+
+    logger.info(f"启动 AutoBuy Web UI: http://{args.host}:{args.port} (debug={args.debug})")
+    app.run(debug=args.debug, host=args.host, port=args.port)

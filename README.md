@@ -90,8 +90,13 @@ uv run python app.py
 # 或使用 pip 启动
 python app.py
 
+# 指定端口启动（支持多开）
+python app.py --port 5001
+python app.py --port 5002
+
 # 启动后访问
 http://localhost:5000
+# 或者你指定的端口
 ```
 
 ## 🚀 使用教程
@@ -99,6 +104,12 @@ http://localhost:5000
 ### 快速启动（推荐新手）
 
 **Windows 用户双击 `start.bat` 即可自动启动！**
+
+也支持传端口多开，例如：
+```bat
+start.bat 5001
+start.bat 5002
+```
 
 该脚本会自动：
 - ✓ 检查 Python 环境

@@ -69,22 +69,26 @@ echo [4/5] 准备启动应用...
 echo.
 
 :: 启动应用
+set PORT=%1
+if "%PORT%"=="" set PORT=5000
+
 echo [5/5] 启动 Web 应用...
 echo ========================================
 echo.
 echo 应用启动成功！请打开浏览器访问:
 echo.
-echo     http://localhost:5000
+echo     http://localhost:%PORT%
 echo.
 echo 提示:
 echo   - 首次启动会自动下载 ChromeDriver，请耐心等待
 echo   - 请勿关闭此窗口，否则服务将停止
 echo   - 使用 Ctrl+C 可停止服务
+echo   - 支持多开：start.bat 5001 / start.bat 5002 ...
 echo.
 echo ========================================
 echo.
 
-python app.py
+python app.py --port %PORT%
 
 :: 如果程序异常退出
 echo.
