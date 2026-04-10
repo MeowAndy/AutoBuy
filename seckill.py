@@ -501,6 +501,7 @@ class SeckillWorker:
         :param wait_for_cart_confirm: 是否等待购物车确认
         """
         self.running = True
+        self.target_time = target_time
 
         try:
             # 初始化浏览器
@@ -527,7 +528,7 @@ class SeckillWorker:
                     self.log("购物车已确认，准备等待抢购时间...")
                     # 在购物车确认后测试当前页面（结算页）的加载时间
                     # 注意：不刷新页面，只检查结算按钮响应时间
-                    if test_load_time and target_time and self.driver:
+                    if test_load_time and self.target_time and self.driver:
                         try:
                             start = time.time()
                             WebDriverWait(self.driver, 2).until(
@@ -540,9 +541,9 @@ class SeckillWorker:
                             load_time = 0.5
 
             # 等待到达目标时间（使用网络时间）
-            if target_time:
-                self.log(f'目标抢购时间：{target_time}')
-                self._wait_for_target_time(target_time)
+            if self.target_time:
+                self.log(f'目标抢购时间：{self.target_time}')
+                self._wait_for_target_time(self.target_time)
 
             # 执行抢购
             success = self._perform_seckill()
