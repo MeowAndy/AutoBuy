@@ -94,7 +94,7 @@ if not "%ORIGINAL_PORT%"=="%PORT%" (
 echo [5/5] 启动 Web 应用...
 echo ========================================
 echo.
-echo 应用启动成功！请打开浏览器访问:
+echo 应用启动成功！即将自动打开浏览器访问:
 echo.
 echo     http://localhost:%PORT%
 echo.
@@ -107,6 +107,7 @@ echo.
 echo ========================================
 echo.
 
+start "" "http://localhost:%PORT%"
 python app.py --port %PORT%
 
 :: 如果程序异常退出
