@@ -202,6 +202,7 @@ class SeckillWorker:
 
         self.driver: webdriver.Chrome | None = None
         self.running: bool = False
+        self.target_time: str | None = None
         # 使用字典来存储确认状态，避免属性访问问题
         self._confirm_states = {}
         self.log_callback: Callable[[str], None] = log_callback or logger.info
@@ -376,23 +377,31 @@ class SeckillWorker:
             pass
 
     def _wait_for_target_time(self, target_time: str):
-        """等待到达目标时间（使用网络时间）"""
-        # 解析目标时间为datetime对象
-        target_dt = self._parse_time_string(target_time)
-        if target_dt is None:
-            self.log(f"错误：无法解析目标时间 {target_time}")
-            return
+        """等待到达目标时间（使用网络时间）。支持在确认购物车前动态改时间。"""
+        self.target_time = target_time
 
         # 使用网络时间记录日志，保持时间一致
         network_timestamp_ms = TimeManager.get_network_time(self.platform)
         network_time = datetime.datetime.fromtimestamp(network_timestamp_ms / 1000)
         network_time_str = network_time.strftime('%H:%M:%S')
-        self.log(f"[{network_time_str}] 等待到达抢购时间 {target_time}...")
+        self.log(f"[{network_time_str}] 等待到达抢购时间 {self.target_time}...")
 
         last_log_time = 0
         refresh_started = False
+        last_target_time = self.target_time
 
         while self.running:
+            current_target = self.target_time or target_time
+            target_dt = self._parse_time_string(current_target)
+            if target_dt is None:
+                self.log(f"错误：无法解析目标时间 {current_target}")
+                return
+
+            if current_target != last_target_time:
+                self.log(f"抢购时间已动态更新为：{current_target}")
+                last_target_time = current_target
+                refresh_started = False
+
             # 使用网络时间
             network_timestamp_ms = TimeManager.get_network_time(self.platform)
             network_time = datetime.datetime.fromtimestamp(network_timestamp_ms / 1000)

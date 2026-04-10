@@ -265,6 +265,10 @@
                 const data = await response.json();
 
                 if (data.status === 'ok') {
+                    if (data.time_locked) {
+                        currentTimeLocked = true;
+                        disableTimeInputs(true);
+                    }
                     // 更新按钮状态
                     if (stage === 'login') {
                         const confirmLoginBtn = document.getElementById('confirmLoginBtn');
@@ -290,6 +294,12 @@
             initTimeSelectors();
             updatePlatform();
             updateSteps(0);
+            ['targetDate', 'targetHour', 'targetMinute', 'targetSecond', 'targetMicrosecond'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) {
+                    el.addEventListener('change', syncTargetTimeIfNeeded);
+                }
+            });
         };
 
         function getCurrentTime() {

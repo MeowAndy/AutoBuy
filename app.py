@@ -44,7 +44,8 @@ class TaskManager:
                 'driver': None,
                 'running': False,
                 'thread': None,
-                'target_time': target_time
+                'target_time': target_time,
+                'time_locked': False
             }
         return task_id
 
@@ -233,9 +234,12 @@ def confirm_stage(task_id):
     else:
         logger.error(f"Worker 没有 _confirm_states 属性")
 
+    if stage == 'cart':
+        task['time_locked'] = True
+
     task_manager.add_log(task_id, f"用户已确认{stage}阶段，继续下一步...")
 
-    return jsonify({'status': 'ok'})
+    return jsonify({'status': 'ok', 'time_locked': task.get('time_locked', False)})
 
 
 @app.route('/api/tasks/<task_id>/status')
@@ -250,8 +254,34 @@ def get_task_status(task_id):
         'status': task['status'],
         'running': task['running'],
         'target_time': task.get('target_time'),
+        'time_locked': task.get('time_locked', False),
         'logs': list(task['logs'])
     })
+
+
+@app.route('/api/tasks/<task_id>/target-time', methods=['POST'])
+def update_target_time(task_id):
+    task = task_manager.get_task(task_id)
+    if not task:
+        return jsonify({'error': '任务不存在'}), 404
+
+    if task.get('time_locked'):
+        return jsonify({'error': '购物车已确认，抢购时间已锁定'}), 400
+
+    data = request.json or {}
+    target_time = data.get('target_time')
+    if not target_time:
+        return jsonify({'error': '请提供新的抢购时间'}), 400
+
+    task['target_time'] = target_time
+    worker = task.get('worker')
+    if worker:
+        try:
+            worker.target_time = target_time
+        except Exception:
+            pass
+    task_manager.add_log(task_id, f'抢购时间已更新为：{target_time}')
+    return jsonify({'status': 'ok', 'target_time': target_time, 'time_locked': task.get('time_locked', False)})
 
 
 @app.route('/api/tasks/<task_id>/stop', methods=['POST'])

@@ -2,6 +2,7 @@ let currentTaskId = null;
 let eventSource = null;
 let currentPlatform = 'jd';
 let currentRenderedLogCount = 0;
+let currentTimeLocked = false;
 
 // 确保驱动已下载
 async function ensureDriver() {
@@ -97,9 +98,10 @@ async function startTask() {
             if (response.ok) {
                 currentTaskId = data.task_id;
                 currentRenderedLogCount = 0;
+                currentTimeLocked = false;
                 document.getElementById('startBtn').disabled = true;
                 document.getElementById('stopBtn').disabled = false;
-                disableTimeInputs(true);
+                disableTimeInputs(false);
                 document.querySelectorAll('input[name="platform"]').forEach(radio => radio.disabled = true);
                 updateStatus('running');
                 updateSteps(1);
@@ -130,9 +132,10 @@ async function startTask() {
             if (response.ok) {
                 currentTaskId = data.task_id;
                 currentRenderedLogCount = 0;
+                currentTimeLocked = false;
                 document.getElementById('startBtn').disabled = true;
                 document.getElementById('stopBtn').disabled = false;
-                disableTimeInputs(true);
+                disableTimeInputs(false);
                 document.querySelectorAll('input[name="platform"]').forEach(radio => radio.disabled = true);
                 updateStatus('running');
                 updateSteps(1);
@@ -347,6 +350,25 @@ function getCurrentTime() {
     return `${hours}:${minutes}:${seconds}`;
 }
 
+async function syncTargetTimeIfNeeded() {
+    if (!currentTaskId || currentTimeLocked) return;
+    const targetTime = getFormattedTime();
+    if (!targetTime) return;
+    try {
+        const response = await fetch(`/api/tasks/${currentTaskId}/target-time`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ target_time: targetTime })
+        });
+        const data = await response.json();
+        if (response.ok) {
+            currentTimeLocked = !!data.time_locked;
+        }
+    } catch (error) {
+        console.error('同步抢购时间失败：', error);
+    }
+}
+
 function updateStatus(status) {
     const statusBadge = document.getElementById('status');
     statusBadge.textContent = getStatusText(status);
@@ -445,6 +467,7 @@ function resetUI() {
     }
 
     currentTaskId = null;
+    currentTimeLocked = false;
 }
 
 // 页面加载完成后检查驱动
@@ -465,6 +488,11 @@ setInterval(async () => {
                 const missing = data.logs.slice(currentRenderedLogCount);
                 missing.forEach(log => addLog(log.message, log.time));
                 currentRenderedLogCount = data.logs.length;
+            }
+
+            if (typeof data.time_locked !== 'undefined') {
+                currentTimeLocked = !!data.time_locked;
+                disableTimeInputs(currentTimeLocked);
             }
 
             if (data.status) {
