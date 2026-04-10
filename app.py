@@ -262,7 +262,7 @@ def confirm_stage(task_id):
     else:
         logger.error(f"Worker 没有 _confirm_states 属性")
 
-    if stage == 'cart':
+    if stage == 'login':
         task['time_locked'] = True
 
     task_manager.add_log(task_id, f"用户已确认{stage}阶段，继续下一步...")
