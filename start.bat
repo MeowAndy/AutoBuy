@@ -72,9 +72,24 @@ echo.
 set PORT=%1
 if "%PORT%"=="" (
     echo.
-    set /p PORT=请输入启动端口（直接回车默认 5000）: 
+    set /p PORT=请输入启动端口（直接回车自动从 5000 开始寻找空闲端口）: 
 )
+
 if "%PORT%"=="" set PORT=5000
+
+:: 自动探测空闲端口（仅当用户未显式指定或指定端口被占用时）
+set ORIGINAL_PORT=%PORT%
+:CHECK_PORT
+netstat -ano | findstr /R /C:":%PORT% .*LISTENING" >nul 2>&1
+if %errorlevel%==0 (
+    echo [提示] 端口 %PORT% 已被占用，尝试下一个端口...
+    set /a PORT=%PORT%+1
+    goto CHECK_PORT
+)
+
+if not "%ORIGINAL_PORT%"=="%PORT%" (
+    echo [提示] 已自动切换到空闲端口：%PORT%
+)
 
 echo [5/5] 启动 Web 应用...
 echo ========================================
@@ -87,7 +102,7 @@ echo 提示:
 echo   - 首次启动会自动下载 ChromeDriver，请耐心等待
 echo   - 请勿关闭此窗口，否则服务将停止
 echo   - 使用 Ctrl+C 可停止服务
-echo   - 支持多开：双击后输入不同端口，或 start.bat 5001 / start.bat 5002 ...
+echo   - 支持多开：双击后输入端口；若留空则自动从 5000 开始找可用端口
 echo.
 echo ========================================
 echo.
