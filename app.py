@@ -128,6 +128,33 @@ def help_page():
     return render_template('help.html')
 
 
+def _spawn_detached_restart():
+    """启动一个脱离当前进程的重启器，避免在请求线程里 execv 导致卡死。"""
+    argv = [sys.executable] + sys.argv
+
+    if os.name == 'nt':
+        # Windows：延迟 2 秒，等待当前进程释放端口后重新拉起
+        cmdline = subprocess.list2cmdline(argv)
+        restart_cmd = f'ping 127.0.0.1 -n 3 >nul && start "" {cmdline}'
+        subprocess.Popen(
+            ['cmd', '/c', restart_cmd],
+            cwd=PROJECT_DIR,
+            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    else:
+        # Linux / macOS：sleep 后后台拉起
+        import shlex
+        cmdline = ' '.join(shlex.quote(x) for x in argv)
+        subprocess.Popen(
+            ['sh', '-c', f'sleep 2; cd {shlex.quote(PROJECT_DIR)}; nohup {cmdline} >/dev/null 2>&1 &'],
+            cwd=PROJECT_DIR,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+
 def _background_self_update():
     """后台自更新并重启当前进程。"""
     try:
@@ -135,8 +162,9 @@ def _background_self_update():
         subprocess.run(['git', 'pull', '--rebase', '--autostash', 'origin', 'main'], cwd=PROJECT_DIR, check=True)
         subprocess.run([sys.executable, '-m', 'pip', 'install', '-r', os.path.join(PROJECT_DIR, 'requirements.txt')], cwd=PROJECT_DIR, check=True)
         logger.info('自更新完成，准备重启应用...')
-        time.sleep(1.0)
-        os.execv(sys.executable, [sys.executable] + sys.argv)
+        _spawn_detached_restart()
+        time.sleep(0.5)
+        os._exit(0)
     except Exception as e:
         logger.error(f'自更新失败: {e}')
 
