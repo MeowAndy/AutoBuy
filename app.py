@@ -5,6 +5,8 @@ from datetime import datetime
 import time
 import os
 import json
+import sys
+import subprocess
 from collections import deque
 
 from seckill import SeckillWorker
@@ -28,20 +30,22 @@ class TaskManager:
     def __init__(self):
         self.tasks = {}
         self.task_counter = 0
+        self.lock = threading.Lock()
 
     def create_task(self, platform, target_time=None):
-        self.task_counter += 1
-        task_id = f"task_{self.task_counter}"
-        self.tasks[task_id] = {
-            'id': task_id,
-            'platform': platform,
-            'status': 'pending',
-            'logs': deque(maxlen=100),
-            'driver': None,
-            'running': False,
-            'thread': None,
-            'target_time': target_time
-        }
+        with self.lock:
+            self.task_counter += 1
+            task_id = f"task_{self.task_counter}"
+            self.tasks[task_id] = {
+                'id': task_id,
+                'platform': platform,
+                'status': 'pending',
+                'logs': deque(maxlen=300),
+                'driver': None,
+                'running': False,
+                'thread': None,
+                'target_time': target_time
+            }
         return task_id
 
     def get_task(self, task_id):
@@ -121,6 +125,27 @@ def index():
 @app.route('/help')
 def help_page():
     return render_template('help.html')
+
+
+def _background_self_update():
+    """后台自更新并重启当前进程。"""
+    try:
+        logger.info('开始执行应用自更新...')
+        subprocess.run(['git', 'pull', '--rebase', '--autostash', 'origin', 'main'], cwd=PROJECT_DIR, check=True)
+        subprocess.run([sys.executable, '-m', 'pip', 'install', '-r', os.path.join(PROJECT_DIR, 'requirements.txt')], cwd=PROJECT_DIR, check=True)
+        logger.info('自更新完成，准备重启应用...')
+        time.sleep(1.0)
+        os.execv(sys.executable, [sys.executable] + sys.argv)
+    except Exception as e:
+        logger.error(f'自更新失败: {e}')
+
+
+# API 路由
+@app.route('/api/app/update', methods=['POST'])
+def update_app():
+    thread = threading.Thread(target=_background_self_update, daemon=True)
+    thread.start()
+    return jsonify({'status': 'updating', 'message': '开始拉取更新并准备重启，请稍后刷新页面'})
 
 
 # API 路由

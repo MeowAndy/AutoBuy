@@ -1,6 +1,7 @@
 let currentTaskId = null;
 let eventSource = null;
 let currentPlatform = 'jd';
+let currentRenderedLogCount = 0;
 
 // 确保驱动已下载
 async function ensureDriver() {
@@ -95,6 +96,7 @@ async function startTask() {
 
             if (response.ok) {
                 currentTaskId = data.task_id;
+                currentRenderedLogCount = 0;
                 document.getElementById('startBtn').disabled = true;
                 document.getElementById('stopBtn').disabled = false;
                 disableTimeInputs(true);
@@ -127,6 +129,7 @@ async function startTask() {
 
             if (response.ok) {
                 currentTaskId = data.task_id;
+                currentRenderedLogCount = 0;
                 document.getElementById('startBtn').disabled = true;
                 document.getElementById('stopBtn').disabled = false;
                 disableTimeInputs(true);
@@ -213,6 +216,7 @@ function clearLogs() {
     if (logContainer) {
         logContainer.innerHTML = '<div class="log-entry"><span class="log-time">--:--:--</span>等待开始...</div>';
     }
+    currentRenderedLogCount = 0;
 }
 
 function startLogStream() {
@@ -226,6 +230,7 @@ function startLogStream() {
         try {
             const log = JSON.parse(event.data);
             addLog(log.message, log.time);
+            currentRenderedLogCount += 1;
 
             // 根据日志内容更新步骤和确认按钮状态
             // 步骤1: 初始化浏览器
@@ -389,6 +394,23 @@ function disableTimeInputs(disabled) {
     });
 }
 
+async function updateApp() {
+    if (!confirm('确定要拉取仓库最新代码并自动重启当前实例吗？')) {
+        return;
+    }
+    try {
+        const btn = document.getElementById('updateBtn');
+        if (btn) btn.disabled = true;
+        const response = await fetch('/api/app/update', { method: 'POST' });
+        const data = await response.json();
+        alert(data.message || '开始更新，页面可能短暂断开，请稍后手动刷新。');
+    } catch (error) {
+        alert('更新失败：' + error.message);
+        const btn = document.getElementById('updateBtn');
+        if (btn) btn.disabled = false;
+    }
+}
+
 function resetUI() {
     document.getElementById('startBtn').disabled = false;
     document.getElementById('stopBtn').disabled = true;
@@ -432,15 +454,31 @@ if (document.readyState === 'loading') {
     ensureDriver();
 }
 
-// 定期检查任务状态
+// 定期检查任务状态（兼容 SSE 丢事件时补拉日志和终态）
 setInterval(async () => {
     if (currentTaskId) {
         try {
             const response = await fetch(`/api/tasks/${currentTaskId}/status`);
             const data = await response.json();
 
-            if (data.status && data.status !== 'running') {
+            if (Array.isArray(data.logs) && data.logs.length > currentRenderedLogCount) {
+                const missing = data.logs.slice(currentRenderedLogCount);
+                missing.forEach(log => addLog(log.message, log.time));
+                currentRenderedLogCount = data.logs.length;
+            }
+
+            if (data.status) {
                 updateStatus(data.status);
+                if (data.status === 'success') {
+                    updateSteps(5);
+                    const closeBrowserBtn = document.getElementById('closeBrowserBtn');
+                    if (closeBrowserBtn) closeBrowserBtn.disabled = false;
+                } else if (data.status === 'running') {
+                    // 保持现状
+                } else if (['failed', 'error', 'stopped'].includes(data.status)) {
+                    const closeBrowserBtn = document.getElementById('closeBrowserBtn');
+                    if (closeBrowserBtn) closeBrowserBtn.disabled = false;
+                }
             }
         } catch (error) {
             console.error('检查状态失败：', error);
