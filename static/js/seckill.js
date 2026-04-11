@@ -4,6 +4,28 @@ let currentPlatform = 'jd';
 let currentRenderedLogCount = 0;
 let currentTimeLocked = false;
 
+async function refreshServerTime() {
+    try {
+        const response = await fetch('/api/time/status');
+        const data = await response.json();
+        if (!response.ok) return;
+
+        const systemTimeEl = document.getElementById('serverSystemTime');
+        const timezoneEl = document.getElementById('serverTimezone');
+        if (systemTimeEl && data.system_time_iso) {
+            const d = new Date(data.system_time_iso);
+            if (!isNaN(d.getTime())) {
+                systemTimeEl.textContent = d.toLocaleString('zh-CN', { hour12: false });
+            }
+        }
+        if (timezoneEl) {
+            timezoneEl.textContent = `时区：${data.timezone || '--'}`;
+        }
+    } catch (error) {
+        console.error('刷新系统时间失败：', error);
+    }
+}
+
 // 确保驱动已下载
 async function ensureDriver() {
     const logContainer = document.getElementById('logContainer');
@@ -472,9 +494,13 @@ function resetUI() {
 
 // 页面加载完成后检查驱动
 if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', ensureDriver);
+    document.addEventListener('DOMContentLoaded', () => {
+        ensureDriver();
+        refreshServerTime();
+    });
 } else {
     ensureDriver();
+    refreshServerTime();
 }
 
 // 定期检查任务状态（兼容 SSE 丢事件时补拉日志和终态）
@@ -513,3 +539,7 @@ setInterval(async () => {
         }
     }
 }, 2000);
+
+setInterval(() => {
+    refreshServerTime();
+}, 1000);

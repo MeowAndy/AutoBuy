@@ -199,6 +199,37 @@ section {
     box-shadow: var(--shadow-1);
 }
 
+.server-time-card {
+    margin-left: auto;
+    width: fit-content;
+    min-width: 320px;
+    padding: 12px 16px;
+    border-radius: 8px;
+    background: linear-gradient(135deg, #f6f9ff, #eef4ff);
+    border: 1px solid #dbe7ff;
+    box-shadow: var(--shadow-1);
+    text-align: right;
+}
+
+.server-time-title {
+    font-size: 12px;
+    color: #4469b0;
+    margin-bottom: 4px;
+}
+
+.server-time-value {
+    font-size: 22px;
+    font-weight: 700;
+    color: #1d3f7a;
+    line-height: 1.2;
+}
+
+.server-time-sub {
+    margin-top: 4px;
+    font-size: 12px;
+    color: #4f6488;
+}
+
 .section-header {
     margin-bottom: 16px;
 }

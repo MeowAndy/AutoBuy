@@ -128,6 +128,18 @@ def help_page():
     return render_template('help.html')
 
 
+@app.route('/api/time/status', methods=['GET'])
+def time_status():
+    now_ts = time.time()
+    dt = datetime.fromtimestamp(now_ts)
+    tz_name = os.environ.get('TZ') or (time.tzname[0] if time.tzname else 'UTC')
+    return jsonify({
+        'timezone': tz_name,
+        'system_timestamp_ms': int(now_ts * 1000),
+        'system_time_iso': dt.isoformat(timespec='milliseconds')
+    })
+
+
 def _spawn_detached_restart():
     """启动一个脱离当前进程的重启器，避免在请求线程里 execv 导致卡死。"""
     argv = [sys.executable] + sys.argv
