@@ -224,10 +224,16 @@ section {
     line-height: 1.2;
 }
 
-.server-time-sub {
+.server-time-sub,
+.server-time-source {
     margin-top: 4px;
     font-size: 12px;
     color: #4f6488;
+}
+
+.time-source-group {
+    margin-top: 10px;
+    max-width: 520px;
 }
 
 .section-header {

@@ -6,6 +6,7 @@ import time
 import os
 import json
 import sys
+import signal
 import subprocess
 from collections import deque
 
@@ -78,6 +79,76 @@ class TaskManager:
 
 task_manager = TaskManager()
 
+RUNTIME_DIR = os.path.join(PROJECT_DIR, 'runtime')
+INSTANCE_REGISTRY = os.path.join(RUNTIME_DIR, 'instances.json')
+os.makedirs(RUNTIME_DIR, exist_ok=True)
+
+
+def _load_instances():
+    if not os.path.exists(INSTANCE_REGISTRY):
+        return []
+    try:
+        with open(INSTANCE_REGISTRY, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+
+def _save_instances(items):
+    with open(INSTANCE_REGISTRY, 'w', encoding='utf-8') as f:
+        json.dump(items, f, ensure_ascii=False, indent=2)
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def _list_instances():
+    items = _load_instances()
+    alive = []
+    changed = False
+    for item in items:
+        pid = int(item.get('pid', 0) or 0)
+        if pid and _pid_alive(pid):
+            item['running'] = True
+            alive.append(item)
+        else:
+            changed = True
+    if changed:
+        _save_instances(alive)
+    return alive
+
+
+def _find_free_port(start_port: int) -> int:
+    import socket
+    port = start_port
+    while True:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                s.bind(('127.0.0.1', port))
+                return port
+            except OSError:
+                port += 1
+
+
+def _spawn_instance(port: int):
+    log_path = os.path.join(RUNTIME_DIR, f'instance_{port}.log')
+    log_file = open(log_path, 'ab')
+    argv = [sys.executable, os.path.join(PROJECT_DIR, 'app.py'), '--port', str(port)]
+    if os.name == 'nt':
+        proc = subprocess.Popen(argv, cwd=PROJECT_DIR, creationflags=subprocess.CREATE_NEW_CONSOLE)
+    else:
+        proc = subprocess.Popen(argv, cwd=PROJECT_DIR, stdout=log_file, stderr=log_file, start_new_session=True)
+    items = _list_instances()
+    items.append({'pid': proc.pid, 'port': port, 'url': f'http://localhost:{port}', 'log_path': log_path, 'created_at': datetime.now().isoformat(timespec='seconds')})
+    _save_instances(items)
+    return proc.pid, log_path
+
 
 # 统一抢购逻辑
 def run_seckill_task(task_id, platform, target_time=None, time_source='system', login_wait=15):
@@ -145,6 +216,7 @@ def time_status():
     selected_dt = datetime.fromtimestamp(selected_ms / 1000)
 
     tz_name = os.environ.get('TZ') or (time.tzname[0] if time.tzname else 'UTC')
+
     return jsonify({
         'source': source,
         'platform': platform,
@@ -171,16 +243,11 @@ import subprocess
 
 project_dir = sys.argv[1]
 argv = sys.argv[2:]
-
 time.sleep(2)
-
-# 避免使用 cmd start 字符串拼接导致路径被错误解析（例如 "\AutoBuy\"）
-# 直接以新控制台启动 Python 进程更稳。
-if len(argv) >= 2 and not os.path.isabs(argv[1]):
-    argv[1] = os.path.join(project_dir, argv[1])
-
+cmdline = subprocess.list2cmdline(argv)
+restart_cmd = f'cd /d "{project_dir}" && {cmdline}'
 subprocess.Popen(
-    argv,
+    ['cmd', '/c', 'start', '"AutoBuy"', 'cmd', '/k', restart_cmd],
     cwd=project_dir,
     creationflags=subprocess.CREATE_NEW_CONSOLE,
 )
@@ -229,19 +296,62 @@ def update_app():
     return jsonify({'status': 'updating', 'message': '开始拉取更新并准备重启，请稍后刷新页面'})
 
 
+@app.route('/api/instances', methods=['GET'])
+def list_instances():
+    return jsonify({'instances': _list_instances(), 'current_port': request.host.split(':')[-1] if ':' in request.host else '80'})
+
+
+@app.route('/api/instances', methods=['POST'])
+def create_instance():
+    data = request.json or {}
+    requested_port = int(data.get('port') or 5000)
+    port = _find_free_port(requested_port)
+    pid, log_path = _spawn_instance(port)
+    return jsonify({'status': 'ok', 'pid': pid, 'port': port, 'url': f'http://localhost:{port}', 'log_path': log_path})
+
+
+@app.route('/api/instances/<int:port>', methods=['DELETE'])
+def stop_instance(port):
+    items = _list_instances()
+    remaining = []
+    stopped = False
+    for item in items:
+        if int(item.get('port', 0)) == port:
+            pid = int(item.get('pid', 0) or 0)
+            if pid and _pid_alive(pid):
+                try:
+                    os.kill(pid, signal.SIGTERM)
+                except OSError:
+                    pass
+            stopped = True
+        else:
+            remaining.append(item)
+    _save_instances(remaining)
+    if not stopped:
+        return jsonify({'error': '实例不存在'}), 404
+    return jsonify({'status': 'stopped', 'port': port})
+
+
 # API 路由
 @app.route('/api/driver/download', methods=['POST'])
 def download_driver():
     """下载驱动"""
     try:
         from webdriver_manager.chrome import ChromeDriverManager
+        from webdriver_manager.core.os_manager import ChromeType
+        import shutil
 
-        logger.info("开始检查 Chrome 浏览器版本...")
-        driver_manager = ChromeDriverManager()
+        logger.info("开始检查 Chrome/Chromium 浏览器版本...")
+        chrome_type = ChromeType.GOOGLE
+        if os.name != 'nt':
+            if shutil.which('chromium') or shutil.which('chromium-browser'):
+                chrome_type = ChromeType.CHROMIUM
+
+        driver_manager = ChromeDriverManager(chrome_type=chrome_type)
         logger.info("正在下载匹配的 ChromeDriver...")
         driver_path = driver_manager.install()
 
-        logger.info(f"ChromeDriver 准备完成，路径: {driver_path}")
+        logger.info(f"ChromeDriver 准备完成，路径: {driver_path} (chrome_type={chrome_type})")
 
         # 返回详细的消息
         return jsonify({

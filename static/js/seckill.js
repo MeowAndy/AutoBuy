@@ -14,6 +14,28 @@ function getTimeSourceText(source) {
     return source === 'syiban_taobao' ? 'syiban淘宝时间' : '系统时间';
 }
 
+function updateSelectedTimeNowDisplay(systemIso = null, selectedIso = null, source = null) {
+    const selectedEl = document.getElementById('selectedTimeNow');
+    if (!selectedEl) return;
+
+    const textSource = getTimeSourceText(source || getSelectedTimeSource());
+    if (selectedIso) {
+        const d = new Date(selectedIso);
+        if (!isNaN(d.getTime())) {
+            selectedEl.textContent = `当前对时：${textSource} ${d.toLocaleString('zh-CN', { hour12: false })}`;
+            return;
+        }
+    }
+    if (systemIso) {
+        const d2 = new Date(systemIso);
+        if (!isNaN(d2.getTime())) {
+            selectedEl.textContent = `当前对时：${textSource} ${d2.toLocaleString('zh-CN', { hour12: false })}`;
+            return;
+        }
+    }
+    selectedEl.textContent = `当前对时：${textSource}`;
+}
+
 async function refreshServerTime() {
     try {
         const source = getSelectedTimeSource();
@@ -23,17 +45,19 @@ async function refreshServerTime() {
 
         const systemTimeEl = document.getElementById('serverSystemTime');
         const timezoneEl = document.getElementById('serverTimezone');
-        if (systemTimeEl && data.selected_time_iso) {
-            const d = new Date(data.selected_time_iso);
+        if (systemTimeEl && data.system_time_iso) {
+            const d = new Date(data.system_time_iso);
             if (!isNaN(d.getTime())) {
                 systemTimeEl.textContent = d.toLocaleString('zh-CN', { hour12: false });
             }
         }
         if (timezoneEl) {
-            timezoneEl.textContent = `时区：${data.timezone || '--'}｜对时：${getTimeSourceText(data.source || source)}`;
+            timezoneEl.textContent = `时区：${data.timezone || '--'}`;
         }
+
+        updateSelectedTimeNowDisplay(data.system_time_iso, data.selected_time_iso, data.source);
     } catch (error) {
-        console.error('刷新系统时间失败：', error);
+        console.error('刷新服务器时间失败：', error);
     }
 }
 
@@ -468,6 +492,60 @@ async function updateApp() {
     }
 }
 
+async function refreshInstances() {
+    try {
+        const response = await fetch('/api/instances');
+        const data = await response.json();
+        const container = document.getElementById('instanceList');
+        if (!container) return;
+        const items = data.instances || [];
+        if (!items.length) {
+            container.innerHTML = '<div class="log-entry"><span class="log-time">--:--:--</span>暂无额外实例</div>';
+            return;
+        }
+        container.innerHTML = items.map(item => {
+            return `<div class="log-entry"><span class="log-time">${item.port}</span>实例端口 ${item.port} · PID ${item.pid} · <a href="${item.url}" target="_blank">打开</a> · <a href="#" onclick="stopInstance(${item.port});return false;">停止</a></div>`;
+        }).join('');
+    } catch (error) {
+        console.error('刷新实例失败：', error);
+    }
+}
+
+async function createInstance() {
+    try {
+        const port = parseInt(document.getElementById('instancePort')?.value || '5001', 10);
+        const response = await fetch('/api/instances', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ port })
+        });
+        const data = await response.json();
+        if (!response.ok) {
+            alert(data.error || '创建实例失败');
+            return;
+        }
+        alert(`新实例已启动：${data.url}`);
+        refreshInstances();
+    } catch (error) {
+        alert('创建实例失败：' + error.message);
+    }
+}
+
+async function stopInstance(port) {
+    if (!confirm(`确定停止 ${port} 端口对应的实例吗？`)) return;
+    try {
+        const response = await fetch(`/api/instances/${port}`, { method: 'DELETE' });
+        const data = await response.json();
+        if (!response.ok) {
+            alert(data.error || '停止实例失败');
+            return;
+        }
+        refreshInstances();
+    } catch (error) {
+        alert('停止实例失败：' + error.message);
+    }
+}
+
 function resetUI() {
     document.getElementById('startBtn').disabled = false;
     document.getElementById('stopBtn').disabled = true;
@@ -503,12 +581,15 @@ function resetUI() {
 
     currentTaskId = null;
     currentTimeLocked = false;
+    currentTimeSource = getSelectedTimeSource();
+    refreshServerTime();
 }
 
 // 页面加载完成后检查驱动
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => {
         ensureDriver();
+        refreshInstances();
         refreshServerTime();
         const sourceEl = document.getElementById('timeSource');
         if (sourceEl) {
@@ -521,6 +602,7 @@ if (document.readyState === 'loading') {
     });
 } else {
     ensureDriver();
+    refreshInstances();
     refreshServerTime();
     const sourceEl = document.getElementById('timeSource');
     if (sourceEl) {
@@ -550,6 +632,10 @@ setInterval(async () => {
                 disableTimeInputs(currentTimeLocked);
             }
 
+            if (data.time_source) {
+                currentTimeSource = data.time_source;
+            }
+
             if (data.status) {
                 updateStatus(data.status);
                 if (data.status === 'success') {
@@ -568,6 +654,10 @@ setInterval(async () => {
         }
     }
 }, 2000);
+
+setInterval(() => {
+    refreshInstances();
+}, 5000);
 
 setInterval(() => {
     refreshServerTime();

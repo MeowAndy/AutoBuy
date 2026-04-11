@@ -16,11 +16,14 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service as ChromeService
 from webdriver_manager.chrome import ChromeDriverManager
+from webdriver_manager.core.os_manager import ChromeType
 from selenium.common.exceptions import (
     NoSuchElementException, TimeoutException
 )
 from selenium.webdriver.chrome.options import Options
 import os
+import shutil
+import subprocess
 
 # 设置项目根目录
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -86,13 +89,37 @@ class BrowserManager:
         options = Options()
         if headless:
             options.add_argument("--headless")
+
         options.add_argument("--disable-gpu")
         options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--remote-debugging-pipe")
         options.add_argument("--incognito")
         options.add_argument("--disable-blink-features")
         options.add_argument("--disable-blink-features=AutomationControlled")
+        options.add_argument("--no-first-run")
+        options.add_argument("--no-default-browser-check")
+        options.add_argument("--disable-background-networking")
+        options.add_argument("--disable-background-timer-throttling")
+        options.add_argument("--disable-renderer-backgrounding")
+        options.add_argument("--disable-features=Translate,BackForwardCache")
+        options.add_argument("--disable-extensions")
+
+        # 避免 /dev/shm 太小导致 renderer 超时崩溃
+        options.add_argument("--disable-dev-shm-usage")
+
+        # 无桌面/远程场景需要绑定 DISPLAY
+        if os.name != 'nt' and not os.environ.get('DISPLAY'):
+            os.environ['DISPLAY'] = ':99'
+
         options.add_experimental_option("excludeSwitches", ["enable-automation"])
         options.add_experimental_option("useAutomationExtension", False)
+
+        # Linux 下优先指定 Chromium 可执行路径，避免 Selenium 走错浏览器包装器
+        if os.name != 'nt':
+            browser_path = shutil.which('chromium-browser') or shutil.which('chromium') or shutil.which('google-chrome')
+            if browser_path:
+                options.binary_location = browser_path
 
         user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0 Safari/537.36"
         options.add_argument(f'user-agent={user_agent}')
@@ -104,11 +131,33 @@ class BrowserManager:
         if options is None:
             options = BrowserManager.create_options()
 
-        logger.info("检查 Chrome 浏览器驱动...")
-        driver_path = ChromeDriverManager().install()
-        logger.info(f"驱动检查成功！驱动路径: {driver_path}")
+        logger.info("检查 Chrome/Chromium 浏览器驱动...")
 
-        driver = webdriver.Chrome(service=ChromeService(driver_path), options=options)
+        chrome_type = ChromeType.GOOGLE
+        if os.name != 'nt':
+            # Linux 下优先适配 Chromium，避免 webdriver-manager 错拉旧版 Google Chrome 驱动
+            if shutil.which('chromium') or shutil.which('chromium-browser'):
+                chrome_type = ChromeType.CHROMIUM
+
+        driver_path = ChromeDriverManager(chrome_type=chrome_type).install()
+        logger.info(f"驱动检查成功！驱动路径: {driver_path} (chrome_type={chrome_type})")
+
+        # 关键路径：首次启动失败时做一次“干净重试”，避免 renderer timeout 直接失败
+        try:
+            driver = webdriver.Chrome(service=ChromeService(driver_path), options=options)
+        except Exception as first_err:
+            logger.warning(f"首次启动浏览器失败，准备重试一次: {first_err}")
+            try:
+                # 清理潜在残留 chromium 进程
+                if os.name != 'nt':
+                    subprocess.run(['pkill', '-f', 'chromium'], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    subprocess.run(['pkill', '-f', 'chrome'], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    time.sleep(0.5)
+
+                retry_options = BrowserManager.create_options(headless=False)
+                driver = webdriver.Chrome(service=ChromeService(driver_path), options=retry_options)
+            except Exception:
+                raise
 
         # 移除 webdriver 特征并移除遮罩层
         driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
@@ -585,7 +634,7 @@ class SeckillWorker:
             # 导航并登录（等待用户确认）
             self._navigate_and_login(login_wait)
             if wait_for_login_confirm and not self._wait_for_user_confirm("login"):
-                return
+                return False
 
             # 等待用户确认购物车
             load_time = 0.5
@@ -598,7 +647,7 @@ class SeckillWorker:
                     self.log("请手动进入购物车，勾选需要抢购的商品，点击结算按钮进入结算界面")
                     self.log("然后点击页面上的'确认购物车'按钮...")
                     if not self._wait_for_user_confirm("cart"):
-                        return
+                        return False
                     self.log("购物车已确认，准备等待抢购时间...")
                     # 在购物车确认后测试当前页面（结算页）的加载时间
                     # 注意：不刷新页面，只检查结算按钮响应时间
@@ -625,11 +674,13 @@ class SeckillWorker:
             if success:
                 self.log("抢购成功！请尽快完成付款")
                 self.log("任务已完成，请手动关闭浏览器或点击页面上的'关闭浏览器'按钮")
+            return success
 
         except Exception as e:
             import traceback
             self.log(f"错误：{str(e)}")
             self.log(f"错误详情：{traceback.format_exc()}")
+            return False
 
     def _wait_for_user_confirm(self, stage: str) -> bool:
         """
