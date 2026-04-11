@@ -7,6 +7,7 @@ import time
 import datetime
 import requests
 import logging
+import threading
 from typing import Callable, Any
 from dataclasses import dataclass
 from selenium.webdriver.support.ui import WebDriverWait
@@ -140,6 +141,16 @@ class BrowserManager:
 class TimeManager:
     """时间管理器"""
 
+    _cache_lock = threading.Lock()
+    _cache = {
+        'syiban_taobao': {
+            'offset_ms': 0.0,
+            'last_sync_monotonic': 0.0,
+            'initialized': False,
+        }
+    }
+    _sync_interval_seconds = 8.0
+
     @staticmethod
     def get_jd_time() -> int:
         """获取京东服务器时间戳"""
@@ -169,11 +180,66 @@ class TimeManager:
                 data = resp.json()
                 if data.get('data') and data['data'].get('t'):
                     return int(data['data']['t'])
-            except:
+            except Exception:
                 continue
 
         logger.warning("获取淘宝时间失败，使用本地时间")
         return round(time.time() * 1000)
+
+    @staticmethod
+    def get_syiban_taobao_time() -> int:
+        """获取 time.syiban.com 对齐使用的淘宝时间戳（毫秒）"""
+        # 该页面本质也是对齐淘宝时间，这里用淘宝时间接口作为稳定数据源
+        return TimeManager.get_tb_time()
+
+    @staticmethod
+    def get_system_time() -> int:
+        """获取系统时间戳（毫秒）"""
+        return round(time.time() * 1000)
+
+    @staticmethod
+    def _sync_syiban_offset_if_needed(force: bool = False):
+        now_mono = time.monotonic()
+        with TimeManager._cache_lock:
+            state = TimeManager._cache['syiban_taobao']
+            need_sync = force or (not state['initialized']) or (
+                now_mono - state['last_sync_monotonic'] >= TimeManager._sync_interval_seconds
+            )
+
+        if not need_sync:
+            return
+
+        try:
+            remote_ms = TimeManager.get_syiban_taobao_time()
+            local_ms = TimeManager.get_system_time()
+            offset_ms = float(remote_ms - local_ms)
+            with TimeManager._cache_lock:
+                state = TimeManager._cache['syiban_taobao']
+                state['offset_ms'] = offset_ms
+                state['last_sync_monotonic'] = now_mono
+                state['initialized'] = True
+        except Exception as e:
+            logger.warning(f"同步 syiban(淘宝时间) 偏移失败，退回系统时间: {e}")
+
+    @staticmethod
+    def now_ms(source: str, platform: str = 'tb') -> int:
+        """根据时间源返回当前时间戳（毫秒）"""
+        source = (source or 'system').lower()
+        if source == 'system':
+            return TimeManager.get_system_time()
+
+        if source == 'syiban_taobao':
+            TimeManager._sync_syiban_offset_if_needed()
+            local_ms = TimeManager.get_system_time()
+            with TimeManager._cache_lock:
+                offset_ms = TimeManager._cache['syiban_taobao']['offset_ms']
+            return int(local_ms + offset_ms)
+
+        # 兼容旧逻辑
+        if source == 'network_platform':
+            return TimeManager.get_network_time(platform)
+
+        return TimeManager.get_system_time()
 
     @staticmethod
     def get_network_time(platform: str) -> int:
@@ -203,6 +269,7 @@ class SeckillWorker:
         self.driver: webdriver.Chrome | None = None
         self.running: bool = False
         self.target_time: str | None = None
+        self.time_source: str = 'system'
         # 使用字典来存储确认状态，避免属性访问问题
         self._confirm_states = {}
         self.log_callback: Callable[[str], None] = log_callback or logger.info
@@ -377,14 +444,15 @@ class SeckillWorker:
             pass
 
     def _wait_for_target_time(self, target_time: str):
-        """等待到达目标时间（使用网络时间）。支持在确认购物车前动态改时间。"""
+        """等待到达目标时间。支持在确认购物车前动态改时间。"""
         self.target_time = target_time
 
-        # 使用网络时间记录日志，保持时间一致
-        network_timestamp_ms = TimeManager.get_network_time(self.platform)
+        # 使用所选时间源记录日志，保持时间一致
+        network_timestamp_ms = TimeManager.now_ms(self.time_source, self.platform)
         network_time = datetime.datetime.fromtimestamp(network_timestamp_ms / 1000)
-        network_time_str = network_time.strftime('%H:%M:%S')
-        self.log(f"[{network_time_str}] 等待到达抢购时间 {self.target_time}...")
+        network_time_str = network_time.strftime('%H:%M:%S.%f')[:-3]
+        source_desc = '系统时间' if self.time_source == 'system' else 'syiban淘宝时间'
+        self.log(f"[{network_time_str}] 使用{source_desc}，等待到达抢购时间 {self.target_time}...")
 
         last_log_time = 0
         refresh_started = False
@@ -402,8 +470,8 @@ class SeckillWorker:
                 last_target_time = current_target
                 refresh_started = False
 
-            # 使用网络时间
-            network_timestamp_ms = TimeManager.get_network_time(self.platform)
+            # 使用选定时间源
+            network_timestamp_ms = TimeManager.now_ms(self.time_source, self.platform)
             network_time = datetime.datetime.fromtimestamp(network_timestamp_ms / 1000)
 
             if network_time >= target_dt:
@@ -428,7 +496,7 @@ class SeckillWorker:
             current_time = time.time()
             if current_time - last_log_time >= 10:
                 time_left = self._calculate_time_left_dt(target_dt, network_time)
-                network_time_str = network_time.strftime('%H:%M:%S')
+                network_time_str = network_time.strftime('%H:%M:%S.%f')[:-3]
                 self.log(f"[{network_time_str}] 距离抢购还有 {time_left}...")
                 last_log_time = current_time
             time.sleep(0.1)
@@ -487,6 +555,7 @@ class SeckillWorker:
     def start_seckill(
         self,
         target_time: str | None = None,
+        time_source: str = 'system',
         login_wait: int = 15,
         test_load_time: bool = True,
         wait_for_login_confirm: bool = True,
@@ -495,6 +564,7 @@ class SeckillWorker:
         """
         启动抢购流程
         :param target_time: 目标时间 (YYYY-MM-DD HH:MM:SS.ffffff)
+        :param time_source: 时间源 system | syiban_taobao
         :param login_wait: 登录等待时间（秒）
         :param test_load_time: 是否测试页面加载时间
         :param wait_for_login_confirm: 是否等待登录确认
@@ -502,6 +572,10 @@ class SeckillWorker:
         """
         self.running = True
         self.target_time = target_time
+        self.time_source = time_source or 'system'
+
+        if self.time_source == 'syiban_taobao':
+            TimeManager._sync_syiban_offset_if_needed(force=True)
 
         try:
             # 初始化浏览器

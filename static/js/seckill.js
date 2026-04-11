@@ -3,23 +3,34 @@ let eventSource = null;
 let currentPlatform = 'jd';
 let currentRenderedLogCount = 0;
 let currentTimeLocked = false;
+let currentTimeSource = 'system';
+
+function getSelectedTimeSource() {
+    const el = document.getElementById('timeSource');
+    return el ? el.value : 'system';
+}
+
+function getTimeSourceText(source) {
+    return source === 'syiban_taobao' ? 'syiban淘宝时间' : '系统时间';
+}
 
 async function refreshServerTime() {
     try {
-        const response = await fetch('/api/time/status');
+        const source = getSelectedTimeSource();
+        const response = await fetch(`/api/time/status?source=${encodeURIComponent(source)}&platform=${encodeURIComponent(currentPlatform || 'tb')}`);
         const data = await response.json();
         if (!response.ok) return;
 
         const systemTimeEl = document.getElementById('serverSystemTime');
         const timezoneEl = document.getElementById('serverTimezone');
-        if (systemTimeEl && data.system_time_iso) {
-            const d = new Date(data.system_time_iso);
+        if (systemTimeEl && data.selected_time_iso) {
+            const d = new Date(data.selected_time_iso);
             if (!isNaN(d.getTime())) {
                 systemTimeEl.textContent = d.toLocaleString('zh-CN', { hour12: false });
             }
         }
         if (timezoneEl) {
-            timezoneEl.textContent = `时区：${data.timezone || '--'}`;
+            timezoneEl.textContent = `时区：${data.timezone || '--'}｜对时：${getTimeSourceText(data.source || source)}`;
         }
     } catch (error) {
         console.error('刷新系统时间失败：', error);
@@ -99,6 +110,7 @@ async function ensureDriver() {
 
 async function startTask() {
     currentPlatform = document.querySelector('input[name="platform"]:checked').value;
+    currentTimeSource = getSelectedTimeSource();
 
     if (currentPlatform === 'jd') {
         const targetTime = getFormattedTime();
@@ -112,7 +124,7 @@ async function startTask() {
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({ target_time: targetTime })
+                body: JSON.stringify({ target_time: targetTime, time_source: currentTimeSource })
             });
 
             const data = await response.json();
@@ -146,7 +158,7 @@ async function startTask() {
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({ target_time: targetTime })
+                body: JSON.stringify({ target_time: targetTime, time_source: currentTimeSource })
             });
 
             const data = await response.json();
@@ -380,11 +392,12 @@ async function syncTargetTimeIfNeeded() {
         const response = await fetch(`/api/tasks/${currentTaskId}/target-time`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ target_time: targetTime })
+            body: JSON.stringify({ target_time: targetTime, time_source: getSelectedTimeSource() })
         });
         const data = await response.json();
         if (response.ok) {
             currentTimeLocked = !!data.time_locked;
+            if (data.time_source) currentTimeSource = data.time_source;
         }
     } catch (error) {
         console.error('同步抢购时间失败：', error);
@@ -431,7 +444,7 @@ function updateSteps(currentStep) {
 }
 
 function disableTimeInputs(disabled) {
-    const inputs = ['targetDate', 'targetHour', 'targetMinute', 'targetSecond', 'targetMicrosecond'];
+    const inputs = ['targetDate', 'targetHour', 'targetMinute', 'targetSecond', 'targetMicrosecond', 'timeSource'];
     inputs.forEach(id => {
         const el = document.getElementById(id);
         if (el) el.disabled = disabled;
@@ -497,10 +510,26 @@ if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => {
         ensureDriver();
         refreshServerTime();
+        const sourceEl = document.getElementById('timeSource');
+        if (sourceEl) {
+            sourceEl.addEventListener('change', () => {
+                currentTimeSource = getSelectedTimeSource();
+                syncTargetTimeIfNeeded();
+                refreshServerTime();
+            });
+        }
     });
 } else {
     ensureDriver();
     refreshServerTime();
+    const sourceEl = document.getElementById('timeSource');
+    if (sourceEl) {
+        sourceEl.addEventListener('change', () => {
+            currentTimeSource = getSelectedTimeSource();
+            syncTargetTimeIfNeeded();
+            refreshServerTime();
+        });
+    }
 }
 
 // 定期检查任务状态（兼容 SSE 丢事件时补拉日志和终态）

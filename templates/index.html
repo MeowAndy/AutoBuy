@@ -122,6 +122,14 @@
                         <button type="button" onclick="quickSelect(1)" class="btn btn-secondary">明天</button>
                         <button type="button" onclick="quickSelect(0)" class="btn btn-secondary">今天</button>
                     </div>
+
+                    <div class="form-group time-source-group">
+                        <label for="timeSource">对时来源</label>
+                        <select id="timeSource">
+                            <option value="system" selected>系统时间（本机）</option>
+                            <option value="syiban_taobao">syiban淘宝时间（http://time.syiban.com/t-taobao.php）</option>
+                        </select>
+                    </div>
                 </section>
 
                 <section class="control-section">
@@ -300,7 +308,7 @@
             initTimeSelectors();
             updatePlatform();
             updateSteps(0);
-            ['targetDate', 'targetHour', 'targetMinute', 'targetSecond', 'targetMicrosecond'].forEach(id => {
+            ['targetDate', 'targetHour', 'targetMinute', 'targetSecond', 'targetMicrosecond', 'timeSource'].forEach(id => {
                 const el = document.getElementById(id);
                 if (el) {
                     el.addEventListener('change', syncTargetTimeIfNeeded);

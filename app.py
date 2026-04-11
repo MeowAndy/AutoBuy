@@ -9,7 +9,7 @@ import sys
 import subprocess
 from collections import deque
 
-from seckill import SeckillWorker
+from seckill import SeckillWorker, TimeManager
 
 # 设置项目根目录
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -32,7 +32,7 @@ class TaskManager:
         self.task_counter = 0
         self.lock = threading.Lock()
 
-    def create_task(self, platform, target_time=None):
+    def create_task(self, platform, target_time=None, time_source='system'):
         with self.lock:
             self.task_counter += 1
             task_id = f"task_{self.task_counter}"
@@ -45,6 +45,7 @@ class TaskManager:
                 'running': False,
                 'thread': None,
                 'target_time': target_time,
+                'time_source': time_source,
                 'time_locked': False
             }
         return task_id
@@ -79,12 +80,13 @@ task_manager = TaskManager()
 
 
 # 统一抢购逻辑
-def run_seckill_task(task_id, platform, target_time=None, login_wait=15):
+def run_seckill_task(task_id, platform, target_time=None, time_source='system', login_wait=15):
     """
     统一抢购任务
     :param task_id: 任务ID
     :param platform: 平台名称 (jd/tb/bb)
     :param target_time: 目标时间
+    :param time_source: 时间源（system/syiban_taobao）
     :param login_wait: 登录等待时间
     """
     task = task_manager.get_task(task_id)
@@ -103,13 +105,14 @@ def run_seckill_task(task_id, platform, target_time=None, login_wait=15):
         worker = SeckillWorker(platform, log_callback=log_callback)
         task['worker'] = worker
         # 启用登录和购物车确认
-        worker.start_seckill(
+        success = worker.start_seckill(
             target_time=target_time,
+            time_source=time_source,
             login_wait=login_wait,
             wait_for_login_confirm=True,
             wait_for_cart_confirm=True
         )
-        task['status'] = 'success'
+        task['status'] = 'success' if success else 'failed'
     except Exception as e:
         task_manager.add_log(task_id, f"错误：{str(e)}")
         task['status'] = 'error'
@@ -130,13 +133,26 @@ def help_page():
 
 @app.route('/api/time/status', methods=['GET'])
 def time_status():
-    now_ts = time.time()
-    dt = datetime.fromtimestamp(now_ts)
+    source = (request.args.get('source') or 'system').lower()
+    platform = (request.args.get('platform') or 'tb').lower()
+    if source not in ['system', 'syiban_taobao']:
+        source = 'system'
+
+    system_ms = TimeManager.get_system_time()
+    selected_ms = TimeManager.now_ms(source=source, platform=platform)
+
+    system_dt = datetime.fromtimestamp(system_ms / 1000)
+    selected_dt = datetime.fromtimestamp(selected_ms / 1000)
+
     tz_name = os.environ.get('TZ') or (time.tzname[0] if time.tzname else 'UTC')
     return jsonify({
+        'source': source,
+        'platform': platform,
         'timezone': tz_name,
-        'system_timestamp_ms': int(now_ts * 1000),
-        'system_time_iso': dt.isoformat(timespec='milliseconds')
+        'system_timestamp_ms': system_ms,
+        'system_time_iso': system_dt.isoformat(timespec='milliseconds'),
+        'selected_timestamp_ms': selected_ms,
+        'selected_time_iso': selected_dt.isoformat(timespec='milliseconds')
     })
 
 
@@ -246,14 +262,18 @@ def download_driver():
 # API 路由
 @app.route('/api/jd/start', methods=['POST'])
 def start_jd():
-    data = request.json
+    data = request.json or {}
     target_time = data.get('target_time')
+    time_source = (data.get('time_source') or 'system').lower()
 
     if not target_time:
         return jsonify({'error': '请设置抢购时间'}), 400
 
-    task_id = task_manager.create_task('jd', target_time)
-    thread = threading.Thread(target=run_seckill_task, args=(task_id, 'jd', target_time, 25))
+    if time_source not in ['system', 'syiban_taobao']:
+        return jsonify({'error': '不支持的时间源'}), 400
+
+    task_id = task_manager.create_task('jd', target_time, time_source=time_source)
+    thread = threading.Thread(target=run_seckill_task, args=(task_id, 'jd', target_time, time_source, 25))
     thread.daemon = True
     thread.start()
 
@@ -262,14 +282,18 @@ def start_jd():
 
 @app.route('/api/tb/start', methods=['POST'])
 def start_tb():
-    data = request.json
+    data = request.json or {}
     target_time = data.get('target_time')
+    time_source = (data.get('time_source') or 'system').lower()
 
     if not target_time:
         return jsonify({'error': '请设置抢购时间'}), 400
 
-    task_id = task_manager.create_task('tb', target_time)
-    thread = threading.Thread(target=run_seckill_task, args=(task_id, 'tb', target_time, 15))
+    if time_source not in ['system', 'syiban_taobao']:
+        return jsonify({'error': '不支持的时间源'}), 400
+
+    task_id = task_manager.create_task('tb', target_time, time_source=time_source)
+    thread = threading.Thread(target=run_seckill_task, args=(task_id, 'tb', target_time, time_source, 15))
     thread.daemon = True
     thread.start()
 
@@ -318,6 +342,7 @@ def get_task_status(task_id):
         'status': task['status'],
         'running': task['running'],
         'target_time': task.get('target_time'),
+        'time_source': task.get('time_source', 'system'),
         'time_locked': task.get('time_locked', False),
         'logs': list(task['logs'])
     })
@@ -337,15 +362,31 @@ def update_target_time(task_id):
     if not target_time:
         return jsonify({'error': '请提供新的抢购时间'}), 400
 
+    time_source = data.get('time_source')
+    if time_source is not None:
+        time_source = (time_source or 'system').lower()
+        if time_source not in ['system', 'syiban_taobao']:
+            return jsonify({'error': '不支持的时间源'}), 400
+        task['time_source'] = time_source
+
     task['target_time'] = target_time
     worker = task.get('worker')
     if worker:
         try:
             worker.target_time = target_time
+            if time_source is not None:
+                worker.time_source = task.get('time_source', 'system')
         except Exception:
             pass
-    task_manager.add_log(task_id, f'抢购时间已更新为：{target_time}')
-    return jsonify({'status': 'ok', 'target_time': target_time, 'time_locked': task.get('time_locked', False)})
+
+    source_text = '系统时间' if task.get('time_source', 'system') == 'system' else 'syiban淘宝时间'
+    task_manager.add_log(task_id, f'抢购时间已更新为：{target_time}（时间源：{source_text}）')
+    return jsonify({
+        'status': 'ok',
+        'target_time': target_time,
+        'time_source': task.get('time_source', 'system'),
+        'time_locked': task.get('time_locked', False)
+    })
 
 
 @app.route('/api/tasks/<task_id>/stop', methods=['POST'])
