@@ -155,11 +155,16 @@ import subprocess
 
 project_dir = sys.argv[1]
 argv = sys.argv[2:]
+
 time.sleep(2)
-cmdline = subprocess.list2cmdline(argv)
-restart_cmd = f'cd /d "{project_dir}" && {cmdline}'
+
+# 避免使用 cmd start 字符串拼接导致路径被错误解析（例如 "\AutoBuy\"）
+# 直接以新控制台启动 Python 进程更稳。
+if len(argv) >= 2 and not os.path.isabs(argv[1]):
+    argv[1] = os.path.join(project_dir, argv[1])
+
 subprocess.Popen(
-    ['cmd', '/c', 'start', '"AutoBuy"', 'cmd', '/k', restart_cmd],
+    argv,
     cwd=project_dir,
     creationflags=subprocess.CREATE_NEW_CONSOLE,
 )
