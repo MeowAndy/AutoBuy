@@ -133,7 +133,7 @@ def _spawn_detached_restart():
     argv = [sys.executable] + sys.argv
 
     if os.name == 'nt':
-        # Windows：使用 Python 辅助进程延迟重启，避免 cmd/start 转义和路径解析问题
+        # Windows：用辅助脚本在新的可见控制台窗口中重启，避免“后台活着但没窗口”
         import tempfile
         helper_code = r'''
 import os
@@ -144,12 +144,12 @@ import subprocess
 project_dir = sys.argv[1]
 argv = sys.argv[2:]
 time.sleep(2)
+cmdline = subprocess.list2cmdline(argv)
+restart_cmd = f'cd /d "{project_dir}" && {cmdline}'
 subprocess.Popen(
-    argv,
+    ['cmd', '/c', 'start', '"AutoBuy"', 'cmd', '/k', restart_cmd],
     cwd=project_dir,
-    creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
-    stdout=subprocess.DEVNULL,
-    stderr=subprocess.DEVNULL,
+    creationflags=subprocess.CREATE_NEW_CONSOLE,
 )
 '''
         fd, helper_path = tempfile.mkstemp(prefix='autobuy_restart_', suffix='.py')
