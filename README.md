@@ -71,6 +71,11 @@ pip install -r requirements.txt
 
 项目使用 `webdriver-manager` 自动管理 ChromeDriver，**无需手动下载和配置**。
 
+> Linux 说明：
+> - 需要安装 `google-chrome` / `chromium` / `chromium-browser` 其中之一
+> - 如果要看到 Selenium 打开的浏览器窗口，必须在**图形桌面环境**中运行（不能只是纯 SSH 无桌面终端）
+> - 服务器环境若无图形桌面，更适合后续再加 headless / 远程显示方案
+
 首次启动 Web 应用时，会自动：
 1. 检测 Chrome 浏览器版本
 2. 下载匹配的 ChromeDriver
@@ -104,6 +109,12 @@ http://localhost:5000
 ### 快速启动（推荐新手）
 
 **Windows 用户双击 `start.bat` 即可自动启动！**
+
+**Linux 用户可执行：**
+```bash
+chmod +x start_linux.sh
+./start_linux.sh
+```
 
 ## 更新日志
 
