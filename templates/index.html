@@ -85,6 +85,7 @@
                 <section class="time-section" id="timeSection">
                     <div class="section-header">
                         <h2>设置抢购时间</h2>
+                        <span style="font-size:12px;color:#888;">版本 {{ version or 'dev' }}</span>
                     </div>
                     <div class="time-inputs">
                         <div class="form-group">
@@ -129,6 +130,13 @@
                         <select id="timeSource">
                             <option value="system" selected>系统时间（服务器本机）</option>
                             <option value="syiban_taobao">syiban淘宝时间（http://time.syiban.com/t-taobao.php）</option>
+                        </select>
+                    </div>
+                    <div class="form-group time-source-group">
+                        <label for="submitMode">提交策略</label>
+                        <select id="submitMode">
+                            <option value="refresh_then_submit" selected>确认购物车后每1秒刷新，到点后提交</option>
+                            <option value="burst_submit">到点后连续多次点击提交</option>
                         </select>
                     </div>
                 </section>

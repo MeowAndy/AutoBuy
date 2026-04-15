@@ -10,6 +10,11 @@ function getSelectedTimeSource() {
     return el ? el.value : 'system';
 }
 
+function getSubmitMode() {
+    const el = document.getElementById('submitMode');
+    return el ? el.value : 'refresh_then_submit';
+}
+
 function getTimeSourceText(source) {
     return source === 'syiban_taobao' ? 'syiban淘宝时间' : '系统时间';
 }
@@ -135,6 +140,7 @@ async function ensureDriver() {
 async function startTask() {
     currentPlatform = document.querySelector('input[name="platform"]:checked').value;
     currentTimeSource = getSelectedTimeSource();
+    const submitMode = getSubmitMode();
 
     if (currentPlatform === 'jd') {
         const targetTime = getFormattedTime();
@@ -148,7 +154,7 @@ async function startTask() {
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({ target_time: targetTime, time_source: currentTimeSource })
+                body: JSON.stringify({ target_time: targetTime, time_source: currentTimeSource, submit_mode: submitMode })
             });
 
             const data = await response.json();
@@ -182,7 +188,7 @@ async function startTask() {
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({ target_time: targetTime, time_source: currentTimeSource })
+                body: JSON.stringify({ target_time: targetTime, time_source: currentTimeSource, submit_mode: submitMode })
             });
 
             const data = await response.json();

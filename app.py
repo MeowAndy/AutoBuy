@@ -17,6 +17,7 @@ PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 DRIVERS_DIR = os.path.join(PROJECT_DIR, 'drivers')
 
 app = Flask(__name__)
+APP_VERSION = 'F0.0.17'
 
 # 配置日志
 logging.basicConfig(
@@ -33,7 +34,7 @@ class TaskManager:
         self.task_counter = 0
         self.lock = threading.Lock()
 
-    def create_task(self, platform, target_time=None, time_source='system'):
+    def create_task(self, platform, target_time=None, time_source='system', submit_mode='refresh_then_submit'):
         with self.lock:
             self.task_counter += 1
             task_id = f"task_{self.task_counter}"
@@ -47,7 +48,8 @@ class TaskManager:
                 'thread': None,
                 'target_time': target_time,
                 'time_source': time_source,
-                'time_locked': False
+                'time_locked': False,
+                'submit_mode': submit_mode
             }
         return task_id
 
@@ -151,7 +153,7 @@ def _spawn_instance(port: int):
 
 
 # 统一抢购逻辑
-def run_seckill_task(task_id, platform, target_time=None, time_source='system', login_wait=15):
+def run_seckill_task(task_id, platform, target_time=None, time_source='system', submit_mode='refresh_then_submit', login_wait=15):
     """
     统一抢购任务
     :param task_id: 任务ID
@@ -179,6 +181,7 @@ def run_seckill_task(task_id, platform, target_time=None, time_source='system', 
         success = worker.start_seckill(
             target_time=target_time,
             time_source=time_source,
+            submit_mode=submit_mode,
             login_wait=login_wait,
             wait_for_login_confirm=True,
             wait_for_cart_confirm=True
@@ -194,7 +197,7 @@ def run_seckill_task(task_id, platform, target_time=None, time_source='system', 
 # 路由定义
 @app.route('/')
 def index():
-    return render_template('index.html')
+    return render_template('index.html', version=APP_VERSION)
 
 
 @app.route('/help')
@@ -375,15 +378,18 @@ def start_jd():
     data = request.json or {}
     target_time = data.get('target_time')
     time_source = (data.get('time_source') or 'system').lower()
+    submit_mode = (data.get('submit_mode') or 'refresh_then_submit').lower()
 
     if not target_time:
         return jsonify({'error': '请设置抢购时间'}), 400
 
     if time_source not in ['system', 'syiban_taobao']:
         return jsonify({'error': '不支持的时间源'}), 400
+    if submit_mode not in ['refresh_then_submit', 'burst_submit']:
+        return jsonify({'error': '不支持的提交策略'}), 400
 
-    task_id = task_manager.create_task('jd', target_time, time_source=time_source)
-    thread = threading.Thread(target=run_seckill_task, args=(task_id, 'jd', target_time, time_source, 25))
+    task_id = task_manager.create_task('jd', target_time, time_source=time_source, submit_mode=submit_mode)
+    thread = threading.Thread(target=run_seckill_task, args=(task_id, 'jd', target_time, time_source, submit_mode, 25))
     thread.daemon = True
     thread.start()
 
@@ -395,15 +401,18 @@ def start_tb():
     data = request.json or {}
     target_time = data.get('target_time')
     time_source = (data.get('time_source') or 'system').lower()
+    submit_mode = (data.get('submit_mode') or 'refresh_then_submit').lower()
 
     if not target_time:
         return jsonify({'error': '请设置抢购时间'}), 400
 
     if time_source not in ['system', 'syiban_taobao']:
         return jsonify({'error': '不支持的时间源'}), 400
+    if submit_mode not in ['refresh_then_submit', 'burst_submit']:
+        return jsonify({'error': '不支持的提交策略'}), 400
 
-    task_id = task_manager.create_task('tb', target_time, time_source=time_source)
-    thread = threading.Thread(target=run_seckill_task, args=(task_id, 'tb', target_time, time_source, 15))
+    task_id = task_manager.create_task('tb', target_time, time_source=time_source, submit_mode=submit_mode)
+    thread = threading.Thread(target=run_seckill_task, args=(task_id, 'tb', target_time, time_source, submit_mode, 15))
     thread.daemon = True
     thread.start()
 

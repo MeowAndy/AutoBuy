@@ -501,7 +501,8 @@ class SeckillWorker:
         network_time = datetime.datetime.fromtimestamp(network_timestamp_ms / 1000)
         network_time_str = network_time.strftime('%H:%M:%S.%f')[:-3]
         source_desc = '系统时间' if self.time_source == 'system' else 'syiban淘宝时间'
-        self.log(f"[{network_time_str}] 使用{source_desc}，等待到达抢购时间 {self.target_time}...")
+        mode_text = '每1秒刷新到点后提交' if self.submit_mode == 'refresh_then_submit' else '到点后连续多次提交'
+        self.log(f"[{network_time_str}] 使用{source_desc}，提交策略：{mode_text}，等待到达抢购时间 {self.target_time}...")
 
         last_log_time = 0
         last_target_time = self.target_time
@@ -524,14 +525,14 @@ class SeckillWorker:
             network_time = datetime.datetime.fromtimestamp(network_timestamp_ms / 1000)
 
             if network_time >= target_dt:
-                self.log("抢购时间已到！停止刷新，准备提交订单...")
+                self.log("抢购时间已到！准备提交订单...")
                 break
 
             # 计算剩余时间（秒）
             time_left_seconds = (target_dt - network_time).total_seconds()
 
-            # 购物车确认后，1秒刷新一次页面，直到抢购时间点
-            if self.driver and time_left_seconds > 0:
+            # 策略1：购物车确认后，1秒刷新一次页面，直到抢购时间点
+            if self.submit_mode == 'refresh_then_submit' and self.driver and time_left_seconds > 0:
                 if not refresh_started:
                     self.log("购物车已确认，开始每1秒刷新页面，直至抢购时间点...")
                     refresh_started = True
@@ -553,7 +554,7 @@ class SeckillWorker:
                 time.sleep(1.0)
                 continue
 
-            # 兜底日志
+            # 策略2：只等待到点，不做刷新
             current_time = time.time()
             if current_time - last_log_time >= 10:
                 time_left = self._calculate_time_left_dt(target_dt, network_time)
@@ -594,8 +595,30 @@ class SeckillWorker:
         """执行抢购"""
         self.log("开始抢购！")
         success = False
-        i = 0
 
+        # 策略2：到点后连续多次提交
+        if self.submit_mode == 'burst_submit':
+            burst_retries = max(max_retries, 30)
+            self.log(f"采用连续提交策略，最多尝试 {burst_retries} 次")
+            i = 0
+            while self.running and not success and i < burst_retries and self.driver:
+                try:
+                    btn = self.driver.find_element(By.CLASS_NAME, self.config.settle_button_class)
+                    if self._click_element_safely(btn):
+                        self.log(f"第{i+1}次提交点击已触发")
+                        # 连点模式不立即认为成功，继续点几次提高命中
+                        if i >= 3:
+                            self.log("✓ 已完成连续提交，检查订单状态")
+                            success = True
+                            break
+                except Exception:
+                    pass
+                i += 1
+                time.sleep(0.05)
+            return success
+
+        # 策略1：标准提交
+        i = 0
         while self.running and not success and i < max_retries and self.driver:
             try:
                 btn = self.driver.find_element(By.CLASS_NAME, self.config.settle_button_class)
@@ -619,7 +642,8 @@ class SeckillWorker:
         login_wait: int = 15,
         test_load_time: bool = True,
         wait_for_login_confirm: bool = True,
-        wait_for_cart_confirm: bool = True
+        wait_for_cart_confirm: bool = True,
+        submit_mode: str = 'refresh_then_submit'
     ):
         """
         启动抢购流程
@@ -633,6 +657,7 @@ class SeckillWorker:
         self.running = True
         self.target_time = target_time
         self.time_source = time_source or 'system'
+        self.submit_mode = submit_mode or 'refresh_then_submit'
 
         if self.time_source == 'syiban_taobao':
             TimeManager._sync_syiban_offset_if_needed(force=True)
