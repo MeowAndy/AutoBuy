@@ -504,8 +504,9 @@ class SeckillWorker:
         self.log(f"[{network_time_str}] 使用{source_desc}，等待到达抢购时间 {self.target_time}...")
 
         last_log_time = 0
-        refresh_started = False
         last_target_time = self.target_time
+        refresh_started = False
+        refresh_count = 0
 
         while self.running:
             current_target = self.target_time or target_time
@@ -517,31 +518,42 @@ class SeckillWorker:
             if current_target != last_target_time:
                 self.log(f"抢购时间已动态更新为：{current_target}")
                 last_target_time = current_target
-                refresh_started = False
 
             # 使用选定时间源
             network_timestamp_ms = TimeManager.now_ms(self.time_source, self.platform)
             network_time = datetime.datetime.fromtimestamp(network_timestamp_ms / 1000)
 
             if network_time >= target_dt:
-                self.log("抢购时间已到！")
+                self.log("抢购时间已到！停止刷新，准备提交订单...")
                 break
 
             # 计算剩余时间（秒）
             time_left_seconds = (target_dt - network_time).total_seconds()
 
-            # 提前15秒开始刷新商品状态
-            if time_left_seconds <= 15 and not refresh_started:
-                self.log("开始刷新商品状态...")
-                refresh_started = True
+            # 购物车确认后，1秒刷新一次页面，直到抢购时间点
+            if self.driver and time_left_seconds > 0:
+                if not refresh_started:
+                    self.log("购物车已确认，开始每1秒刷新页面，直至抢购时间点...")
+                    refresh_started = True
 
-            # 刷新状态期间，每100ms刷新一次
-            if refresh_started and time_left_seconds > 0:
-                self._refresh_item_status()
-                time.sleep(0.1)
+                try:
+                    self.driver.refresh()
+                    refresh_count += 1
+                except Exception as e:
+                    self.log(f"页面刷新异常：{e}")
+
+                # 每10秒输出一次倒计时日志
+                current_time = time.time()
+                if current_time - last_log_time >= 10:
+                    time_left = self._calculate_time_left_dt(target_dt, network_time)
+                    network_time_str = network_time.strftime('%H:%M:%S.%f')[:-3]
+                    self.log(f"[{network_time_str}] 已刷新{refresh_count}次，距离抢购还有 {time_left}...")
+                    last_log_time = current_time
+
+                time.sleep(1.0)
                 continue
 
-            # 每10秒输出一次等待日志
+            # 兜底日志
             current_time = time.time()
             if current_time - last_log_time >= 10:
                 time_left = self._calculate_time_left_dt(target_dt, network_time)
@@ -549,7 +561,6 @@ class SeckillWorker:
                 self.log(f"[{network_time_str}] 距离抢购还有 {time_left}...")
                 last_log_time = current_time
             time.sleep(0.1)
-
     def _parse_time_string(self, time_str: str) -> datetime.datetime | None:
         """解析时间字符串为datetime对象，支持多种格式"""
         formats = [
